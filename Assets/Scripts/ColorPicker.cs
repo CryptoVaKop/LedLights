@@ -9,6 +9,31 @@ using UnityEngine.UI;
 
 public class ColorPicker : MonoBehaviour, ITouchListener
 {
+    class SliderControl
+    {
+        public Slider Slider;
+        public Image Background;
+        public Image Fill;
+        public Image Handle;
+
+        public SliderControl(Transform parent, string name)
+        {
+            Transform sliderTransform = parent.Find(name);
+            Slider = sliderTransform.GetComponent<Slider>();
+            Background = sliderTransform.Find("Background").GetComponent<Image>();
+            Fill = sliderTransform.Find("Fill Area").Find("Fill").GetComponent<Image>();
+            Handle = sliderTransform.Find("Handle Slide Area").Find("Handle").GetComponent<Image>();
+
+        }
+
+        public Color Color
+        {
+            get { return Fill.color; }
+            set { Background.color = Fill.color = Handle.color = value; }
+        }
+    }
+
+
     /// <summary>
     /// Цветной круг для выбора цвета.
     /// </summary>
@@ -23,13 +48,23 @@ public class ColorPicker : MonoBehaviour, ITouchListener
     /// <summary>
     /// Регулировка яркости цвета.
     /// </summary>
-    public Scrollbar BrightnessControl;
-    public Image BrightnessControlImage;
+    private SliderControl Brightness;
+
+    /// <summary>
+    /// Регулировка насыщенности цвета.
+    /// </summary>
+
+    private SliderControl Saturation;
+
+    private Image SelectedColor;
+
 
     /// <summary>
     /// Радиус цветного круга.
     /// </summary>
     private float CircleRadius;
+
+    private float CircleThink = 50.0f;
 
     /// <summary>
     /// Радиус маркера.
@@ -47,14 +82,14 @@ public class ColorPicker : MonoBehaviour, ITouchListener
     private float[] Angles;
 
 
+    Vector2 TouchToPicker;
+
+
     /// <summary>
     /// Получить текущий цвет.
     /// </summary>
     /// <returns> Текущий цвет. </returns>
-    public Color GetColor()
-    {
-        return BrightnessControlImage.color;
-    }
+    public Color Color { get { return SelectedColor.color; } }
 
 
 
@@ -102,8 +137,6 @@ public class ColorPicker : MonoBehaviour, ITouchListener
             }
         }
 
-        color = Color.Lerp(Color.white, color, pixelPos.magnitude / CircleRadius);
-
         return color;
     }
 
@@ -118,9 +151,13 @@ public class ColorPicker : MonoBehaviour, ITouchListener
         PickerTransform = ColorCircle.GetChild(0) as RectTransform;
         Picker = PickerTransform.GetComponent<Image>();
 
-        // Инициализировать необходимые компоненты регулировки яркости
-        BrightnessControl = transform.GetChild(1).GetComponent<Scrollbar>();
-        BrightnessControlImage = BrightnessControl.GetComponent<Image>();
+        // Создать регулировку яркости
+        Brightness = new SliderControl(transform, "BrightnessSlider");
+
+        // Создать регулировку насыщенности
+        Saturation = new SliderControl(transform, "SaturationSlider");
+
+        SelectedColor = transform.Find("SelectedColor").GetComponent<Image>();
 
         // Инициализировать радиусы цветного круга и маркера
         CircleRadius = 0.5f * ColorCircle.sizeDelta.x;
@@ -142,13 +179,23 @@ public class ColorPicker : MonoBehaviour, ITouchListener
         // Обновить текущий цвет маркера
         Picker.color = CalcColor(PickerTransform.anchoredPosition);
 
+        // Обновить текущий цвет регулировки насыщенности
+        Saturation.Color = Color.Lerp(Color.white, Picker.color, Saturation.Slider.value);
+
         // Обновить текущий цвет регулировки яркости
-        BrightnessControlImage.color = Color.Lerp(Color.black, Picker.color, BrightnessControl.value);
+        Brightness.Color = SelectedColor.color = Color.Lerp(Color.black, Saturation.Color, Brightness.Slider.value);
+
+        // При изменении насыщенности - обновлять цвет
+        Saturation.Slider.onValueChanged.AddListener((float value) =>
+        {
+            Saturation.Color = Color.Lerp(Color.white, Picker.color, Saturation.Slider.value);
+            Brightness.Color = SelectedColor.color = Color.Lerp(Color.black, Saturation.Color, Brightness.Slider.value);
+        });
 
         // При изменении яркости - обновлять цвет
-        BrightnessControl.onValueChanged.AddListener((float value) =>
+        Brightness.Slider.onValueChanged.AddListener((float value) =>
         {
-            BrightnessControlImage.color = Color.Lerp(Color.black, Picker.color, value);
+            Brightness.Color = SelectedColor.color = Color.Lerp(Color.black, Saturation.Color, Brightness.Slider.value);
         });
 
         // Зарегистрироваться в TouchController-е, чтобы отслеживать перемещения пальцев или мыши по экрану
@@ -176,8 +223,8 @@ public class ColorPicker : MonoBehaviour, ITouchListener
     /// <param name="position"> Координаты касания или клика. </param>
     public bool OnTouchBegin(Vector2 position)
     {
-        Vector2 touchToPicker = position - (Vector2)PickerTransform.position;
-        if (touchToPicker.sqrMagnitude <= PickerRadius * PickerRadius)
+        TouchToPicker = (Vector2)PickerTransform.position - position;
+        if (TouchToPicker.sqrMagnitude <= PickerRadius * PickerRadius)
         {
             // Если попали на маркер - вернуть true, иначе false
             return true;
@@ -192,17 +239,16 @@ public class ColorPicker : MonoBehaviour, ITouchListener
     /// <param name="position"> Координаты пальца или мыши. </param>
     public void OnTouchMove(Vector2 position)
     {
-        PickerTransform.position = position;
+        PickerTransform.position = position + TouchToPicker;
 
-        // Ограничить положение маркера, чтобы его центр не вылезал за краницу цветного круга
-        if (PickerTransform.anchoredPosition.sqrMagnitude > CircleRadius * CircleRadius)
-        {
-            PickerTransform.anchoredPosition = PickerTransform.anchoredPosition.normalized * CircleRadius;
-        }
+        // Ограничить положение маркера
+        PickerTransform.anchoredPosition = PickerTransform.anchoredPosition.normalized * (CircleRadius - 0.5f * CircleThink);
 
         // Обновить цвет маркера и регулировки яркости
         Picker.color = CalcColor(PickerTransform.anchoredPosition);
-        BrightnessControlImage.color = Color.Lerp(Color.black, Picker.color, BrightnessControl.value);
+        Saturation.Color = Color.Lerp(Color.white, Picker.color, Saturation.Slider.value);
+        Brightness.Color = SelectedColor.color = Color.Lerp(Color.black, Saturation.Color, Brightness.Slider.value);
+
     }
 
 
